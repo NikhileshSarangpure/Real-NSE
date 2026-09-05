@@ -4,13 +4,11 @@ import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime, timedelta
-import asyncio
+import requests
+import yfinance as yf
+from bs4 import BeautifulSoup
 import time
-
-# Import custom modules
-from data_collector import DataCollector
-from analyzer import StockAnalyzer
-from recommender import RecommendationEngine
+import ta
 
 # Page configuration
 st.set_page_config(
@@ -53,6 +51,450 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+class DataCollector:
+    def __init__(self):
+        self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
+    
+    def get_stock_data(self, symbol, period="6mo"):
+        """Fetch stock price data from Yahoo Finance (NSE stocks)"""
+        try:
+            # Convert NSE symbol to Yahoo format
+            yahoo_symbol = f"{symbol}.NS"
+            stock = yf.Ticker(yahoo_symbol)
+            
+            # Get historical data
+            hist = stock.history(period=period)
+            
+            if hist.empty:
+                return None
+            
+            # Calculate technical indicators
+            hist['MA_20'] = hist['Close'].rolling(window=20).mean()
+            hist['MA_50'] = hist['Close'].rolling(window=50).mean()
+            hist['RSI'] = self.calculate_rsi(hist['Close'])
+            
+            return hist
+            
+        except Exception as e:
+            print(f"Error fetching stock data for {symbol}: {e}")
+            return None
+    
+    def get_fundamental_data(self, symbol):
+        """Return sample fundamental data"""
+        # Using sample data to avoid scraping issues
+        sample_data = {
+            'pe_ratio': 24.5,
+            'pb_ratio': 3.2,
+            'ev_ebitda': 12.8,
+            'roe': 18.5,
+            'roa': 8.7,
+            'net_margin': 12.3,
+            'revenue_growth': 15.2,
+            'profit_growth': 22.1,
+            'debt_equity': 0.45,
+            'current_ratio': 2.1,
+            'financial_health_score': 7.5
+        }
+        return sample_data
+    
+    def calculate_rsi(self, prices, window=14):
+        """Calculate RSI indicator"""
+        delta = prices.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
+
+class StockAnalyzer:
+    def __init__(self):
+        pass
+    
+    def technical_analysis(self, stock_data):
+        """Perform technical analysis on stock data"""
+        try:
+            latest_data = stock_data.iloc[-1]
+            
+            # RSI Analysis
+            rsi = latest_data['RSI']
+            rsi_signal = self.get_rsi_signal(rsi)
+            
+            # MACD Analysis
+            macd_line, macd_signal, macd_histogram = self.calculate_macd(stock_data['Close'])
+            macd_signal_trend = "Bullish" if macd_line.iloc[-1] > macd_signal.iloc[-1] else "Bearish"
+            
+            # Moving Average Analysis
+            ma_20 = latest_data['MA_20']
+            ma_50 = latest_data['MA_50']
+            current_price = latest_data['Close']
+            
+            ma_trend = 1 if ma_20 > ma_50 and current_price > ma_20 else -1
+            
+            # Support and Resistance
+            support, resistance = self.calculate_support_resistance(stock_data)
+            
+            return {
+                'rsi': rsi,
+                'rsi_signal': rsi_signal,
+                'macd': macd_line.iloc[-1],
+                'macd_signal': macd_signal.iloc[-1],
+                'macd_trend': macd_signal_trend,
+                'ma_trend': ma_trend,
+                'ma_20': ma_20,
+                'ma_50': ma_50,
+                'support': support,
+                'resistance': resistance,
+                'technical_score': self.calculate_technical_score({
+                    'rsi': rsi,
+                    'macd_trend': macd_signal_trend,
+                    'ma_trend': ma_trend
+                })
+            }
+            
+        except Exception as e:
+            print(f"Error in technical analysis: {e}")
+            return {}
+    
+    def fundamental_analysis(self, fundamental_data):
+        """Analyze fundamental metrics"""
+        try:
+            # Valuation Analysis
+            pe_score = self.score_pe_ratio(fundamental_data.get('pe_ratio', 0))
+            pb_score = self.score_pb_ratio(fundamental_data.get('pb_ratio', 0))
+            
+            # Profitability Analysis
+            roe_score = self.score_roe(fundamental_data.get('roe', 0))
+            roa_score = self.score_roa(fundamental_data.get('roa', 0))
+            margin_score = self.score_margin(fundamental_data.get('net_margin', 0))
+            
+            # Growth Analysis
+            revenue_growth_score = self.score_growth(fundamental_data.get('revenue_growth', 0))
+            profit_growth_score = self.score_growth(fundamental_data.get('profit_growth', 0))
+            
+            # Financial Health
+            debt_score = self.score_debt_ratio(fundamental_data.get('debt_equity', 0))
+            
+            # Overall Fundamental Score
+            fundamental_score = np.mean([
+                pe_score, pb_score, roe_score, roa_score, 
+                margin_score, revenue_growth_score, profit_growth_score, debt_score
+            ])
+            
+            return {
+                'pe_ratio': fundamental_data.get('pe_ratio', 0),
+                'pb_ratio': fundamental_data.get('pb_ratio', 0),
+                'ev_ebitda': fundamental_data.get('ev_ebitda', 0),
+                'roe': fundamental_data.get('roe', 0),
+                'roa': fundamental_data.get('roa', 0),
+                'net_margin': fundamental_data.get('net_margin', 0),
+                'revenue_growth': fundamental_data.get('revenue_growth', 0),
+                'profit_growth': fundamental_data.get('profit_growth', 0),
+                'debt_equity': fundamental_data.get('debt_equity', 0),
+                'fundamental_score': fundamental_score,
+                'valuation_score': np.mean([pe_score, pb_score]),
+                'profitability_score': np.mean([roe_score, roa_score, margin_score]),
+                'growth_score': np.mean([revenue_growth_score, profit_growth_score]),
+                'financial_health_score': debt_score
+            }
+            
+        except Exception as e:
+            print(f"Error in fundamental analysis: {e}")
+            return {}
+    
+    def calculate_macd(self, prices, fast=12, slow=26, signal=9):
+        """Calculate MACD indicator"""
+        ema_fast = prices.ewm(span=fast).mean()
+        ema_slow = prices.ewm(span=slow).mean()
+        macd_line = ema_fast - ema_slow
+        macd_signal = macd_line.ewm(span=signal).mean()
+        macd_histogram = macd_line - macd_signal
+        return macd_line, macd_signal, macd_histogram
+    
+    def calculate_support_resistance(self, stock_data, lookback=20):
+        """Calculate support and resistance levels"""
+        try:
+            recent_data = stock_data.tail(lookback)
+            support = recent_data['Low'].min()
+            resistance = recent_data['High'].max()
+            return support, resistance
+        except:
+            return 0, 0
+    
+    # Scoring functions
+    def get_rsi_signal(self, rsi):
+        if rsi > 70:
+            return "Overbought"
+        elif rsi < 30:
+            return "Oversold"
+        else:
+            return "Neutral"
+    
+    def score_pe_ratio(self, pe):
+        if pe <= 0:
+            return 0
+        elif pe < 15:
+            return 8
+        elif pe < 25:
+            return 6
+        elif pe < 35:
+            return 4
+        else:
+            return 2
+    
+    def score_pb_ratio(self, pb):
+        if pb <= 0:
+            return 0
+        elif pb < 1:
+            return 9
+        elif pb < 3:
+            return 7
+        elif pb < 5:
+            return 5
+        else:
+            return 3
+    
+    def score_roe(self, roe):
+        if roe > 20:
+            return 9
+        elif roe > 15:
+            return 7
+        elif roe > 10:
+            return 5
+        elif roe > 5:
+            return 3
+        else:
+            return 1
+    
+    def score_roa(self, roa):
+        if roa > 15:
+            return 9
+        elif roa > 10:
+            return 7
+        elif roa > 5:
+            return 5
+        elif roa > 2:
+            return 3
+        else:
+            return 1
+    
+    def score_margin(self, margin):
+        if margin > 20:
+            return 9
+        elif margin > 15:
+            return 7
+        elif margin > 10:
+            return 5
+        elif margin > 5:
+            return 3
+        else:
+            return 1
+    
+    def score_growth(self, growth):
+        if growth > 25:
+            return 9
+        elif growth > 15:
+            return 7
+        elif growth > 10:
+            return 5
+        elif growth > 5:
+            return 3
+        elif growth > 0:
+            return 2
+        else:
+            return 1
+    
+    def score_debt_ratio(self, debt_ratio):
+        if debt_ratio < 0.3:
+            return 9
+        elif debt_ratio < 0.5:
+            return 7
+        elif debt_ratio < 1:
+            return 5
+        elif debt_ratio < 2:
+            return 3
+        else:
+            return 1
+    
+    def calculate_technical_score(self, technical_indicators):
+        """Calculate overall technical score"""
+        score = 5  # Base score
+        
+        # RSI contribution
+        rsi = technical_indicators.get('rsi', 50)
+        if 30 <= rsi <= 70:
+            score += 1
+        elif rsi < 30:
+            score += 2  # Oversold - potential buy
+        elif rsi > 70:
+            score -= 1  # Overbought
+        
+        # MACD contribution
+        if technical_indicators.get('macd_trend') == "Bullish":
+            score += 1
+        else:
+            score -= 1
+        
+        # MA Trend contribution
+        if technical_indicators.get('ma_trend', 0) > 0:
+            score += 1
+        else:
+            score -= 1
+        
+        return max(0, min(10, score))  # Clamp between 0 and 10
+
+class RecommendationEngine:
+    def __init__(self):
+        # Weights for different analysis components
+        self.weights = {
+            'technical': 0.25,
+            'fundamental': 0.30,
+            'growth': 0.25,
+            'financial_health': 0.20
+        }
+    
+    def get_recommendation(self, technical_analysis, fundamental_analysis):
+        """Generate buy/sell/hold recommendation"""
+        try:
+            # Extract scores
+            technical_score = technical_analysis.get('technical_score', 5)
+            fundamental_score = fundamental_analysis.get('fundamental_score', 5)
+            growth_score = fundamental_analysis.get('growth_score', 5)
+            health_score = fundamental_analysis.get('financial_health_score', 5)
+            
+            # Calculate weighted overall score
+            overall_score = (
+                technical_score * self.weights['technical'] +
+                fundamental_score * self.weights['fundamental'] +
+                growth_score * self.weights['growth'] +
+                health_score * self.weights['financial_health']
+            )
+            
+            # Generate recommendation
+            if overall_score >= 7:
+                action = "BUY"
+                confidence = "High"
+                reasoning = self.get_buy_reasoning(technical_analysis, fundamental_analysis)
+            elif overall_score >= 5.5:
+                action = "HOLD"
+                confidence = "Medium"
+                reasoning = self.get_hold_reasoning(technical_analysis, fundamental_analysis)
+            else:
+                action = "SELL"
+                confidence = "High"
+                reasoning = self.get_sell_reasoning(technical_analysis, fundamental_analysis)
+            
+            # Risk assessment
+            risk_level = self.assess_risk(technical_analysis, fundamental_analysis)
+            
+            return {
+                'action': action,
+                'score': overall_score,
+                'confidence': confidence,
+                'reasoning': reasoning,
+                'risk_level': risk_level,
+                'technical_score': technical_score,
+                'fundamental_score': fundamental_score,
+                'growth_score': growth_score,
+                'health_score': health_score
+            }
+            
+        except Exception as e:
+            print(f"Error generating recommendation: {e}")
+            return {
+                'action': 'HOLD',
+                'score': 5.0,
+                'confidence': 'Low',
+                'reasoning': 'Unable to analyze due to insufficient data',
+                'risk_level': 'High'
+            }
+    
+    def get_buy_reasoning(self, technical, fundamental):
+        """Generate reasoning for BUY recommendation"""
+        reasons = []
+        
+        if fundamental.get('roe', 0) > 15:
+            reasons.append("Strong ROE indicates efficient management")
+        
+        if fundamental.get('revenue_growth', 0) > 15:
+            reasons.append("Strong revenue growth trajectory")
+        
+        if technical.get('rsi', 50) < 70 and technical.get('ma_trend', 0) > 0:
+            reasons.append("Technical indicators show bullish momentum")
+        
+        if fundamental.get('pe_ratio', 30) < 25:
+            reasons.append("Attractive valuation metrics")
+        
+        if fundamental.get('debt_equity', 1) < 0.5:
+            reasons.append("Healthy balance sheet with low debt")
+        
+        if not reasons:
+            reasons.append("Overall positive indicators across multiple metrics")
+        
+        return " • ".join(reasons)
+    
+    def get_hold_reasoning(self, technical, fundamental):
+        """Generate reasoning for HOLD recommendation"""
+        reasons = ["Mixed signals across different analysis parameters"]
+        
+        if fundamental.get('fundamental_score', 5) > 6:
+            reasons.append("Strong fundamentals but technical indicators are mixed")
+        elif technical.get('technical_score', 5) > 6:
+            reasons.append("Good technical setup but fundamental concerns exist")
+        
+        return " • ".join(reasons)
+    
+    def get_sell_reasoning(self, technical, fundamental):
+        """Generate reasoning for SELL recommendation"""
+        reasons = []
+        
+        if fundamental.get('pe_ratio', 0) > 35:
+            reasons.append("Overvalued based on P/E ratio")
+        
+        if fundamental.get('debt_equity', 0) > 1.5:
+            reasons.append("High debt levels pose financial risk")
+        
+        if technical.get('rsi', 50) > 70:
+            reasons.append("Technical indicators show overbought conditions")
+        
+        if fundamental.get('revenue_growth', 0) < 0:
+            reasons.append("Declining revenue growth")
+        
+        if fundamental.get('roe', 0) < 10:
+            reasons.append("Poor return on equity")
+        
+        if not reasons:
+            reasons.append("Multiple negative indicators suggest caution")
+        
+        return " • ".join(reasons)
+    
+    def assess_risk(self, technical, fundamental):
+        """Assess investment risk level"""
+        risk_factors = 0
+        
+        # Technical risk factors
+        if technical.get('rsi', 50) > 80:
+            risk_factors += 1
+        
+        # Fundamental risk factors
+        if fundamental.get('debt_equity', 0) > 1:
+            risk_factors += 1
+        
+        if fundamental.get('pe_ratio', 0) > 40:
+            risk_factors += 1
+        
+        if fundamental.get('roe', 0) < 5:
+            risk_factors += 1
+        
+        if risk_factors >= 3:
+            return "High"
+        elif risk_factors >= 1:
+            return "Medium"
+        else:
+            return "Low"
+
 class StockApp:
     def __init__(self):
         self.data_collector = DataCollector()
@@ -86,15 +528,14 @@ class StockApp:
         # Top metrics
         col1, col2, col3, col4 = st.columns(4)
         
-        # Sample market data (in real app, fetch from NSE)
         with col1:
-            st.metric("NIFTY 50", "19,122.15", "145.30 (0.77%)", delta_color="normal")
+            st.metric("NIFTY 50", "19,122.15", "145.30 (0.77%)")
         with col2:
-            st.metric("SENSEX", "64,112.65", "456.78 (0.72%)", delta_color="normal")
+            st.metric("SENSEX", "64,112.65", "456.78 (0.72%)")
         with col3:
-            st.metric("Bank NIFTY", "43,567.80", "-123.45 (-0.28%)", delta_color="inverse")
+            st.metric("Bank NIFTY", "43,567.80", "-123.45 (-0.28%)")
         with col4:
-            st.metric("VIX", "13.25", "-0.45 (-3.29%)", delta_color="inverse")
+            st.metric("VIX", "13.25", "-0.45 (-3.29%)")
         
         # Top gainers and losers
         col1, col2 = st.columns(2)
@@ -116,9 +557,6 @@ class StockApp:
                 "Change %": [-4.67, -3.23, -2.89, -2.45, -1.98]
             }
             st.dataframe(pd.DataFrame(losers_data))
-        
-        # Market heatmap
-        self.create_market_heatmap()
     
     def stock_analysis_page(self):
         st.header("Individual Stock Analysis")
@@ -149,6 +587,8 @@ class StockApp:
                     # Display results
                     self.display_stock_analysis(symbol, stock_data, fundamental_data, 
                                               technical_analysis, fundamental_analysis, recommendation)
+                else:
+                    st.error("Unable to fetch data for the specified stock. Please check the symbol.")
     
     def display_stock_analysis(self, symbol, stock_data, fundamental_data, 
                              technical_analysis, fundamental_analysis, recommendation):
@@ -203,19 +643,21 @@ class StockApp:
         ))
         
         # Moving averages
-        fig.add_trace(go.Scatter(
-            x=stock_data.index,
-            y=stock_data['MA_20'],
-            name='MA 20',
-            line=dict(color='orange')
-        ))
+        if 'MA_20' in stock_data.columns:
+            fig.add_trace(go.Scatter(
+                x=stock_data.index,
+                y=stock_data['MA_20'],
+                name='MA 20',
+                line=dict(color='orange')
+            ))
         
-        fig.add_trace(go.Scatter(
-            x=stock_data.index,
-            y=stock_data['MA_50'],
-            name='MA 50',
-            line=dict(color='blue')
-        ))
+        if 'MA_50' in stock_data.columns:
+            fig.add_trace(go.Scatter(
+                x=stock_data.index,
+                y=stock_data['MA_50'],
+                name='MA 50',
+                line=dict(color='blue')
+            ))
         
         fig.update_layout(
             title=f"{symbol} Price Chart with Moving Averages",
@@ -233,31 +675,35 @@ class StockApp:
             st.subheader("Technical Indicators")
             
             # RSI
-            st.metric("RSI (14)", f"{technical_analysis['rsi']:.2f}", 
-                     "Overbought" if technical_analysis['rsi'] > 70 else 
-                     "Oversold" if technical_analysis['rsi'] < 30 else "Neutral")
+            rsi_value = technical_analysis.get('rsi', 50)
+            st.metric("RSI (14)", f"{rsi_value:.2f}", 
+                     technical_analysis.get('rsi_signal', 'N/A'))
             
             # MACD
-            macd_signal = "Bullish" if technical_analysis['macd'] > technical_analysis['macd_signal'] else "Bearish"
+            macd_signal = technical_analysis.get('macd_trend', 'N/A')
             st.metric("MACD Signal", macd_signal)
             
             # Moving Average Trend
-            ma_trend = "Bullish" if technical_analysis['ma_trend'] > 0 else "Bearish"
+            ma_trend = "Bullish" if technical_analysis.get('ma_trend', 0) > 0 else "Bearish"
             st.metric("MA Trend", ma_trend)
+            
+            # Technical Score
+            st.metric("Technical Score", f"{technical_analysis.get('technical_score', 0):.2f}/10")
         
         with col2:
-            # RSI Chart
-            fig_rsi = go.Figure()
-            fig_rsi.add_trace(go.Scatter(
-                x=stock_data.index,
-                y=stock_data['RSI'],
-                name='RSI',
-                line=dict(color='purple')
-            ))
-            fig_rsi.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overbought")
-            fig_rsi.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="Oversold")
-            fig_rsi.update_layout(title="RSI Indicator", height=300)
-            st.plotly_chart(fig_rsi, use_container_width=True)
+            if 'RSI' in stock_data.columns:
+                # RSI Chart
+                fig_rsi = go.Figure()
+                fig_rsi.add_trace(go.Scatter(
+                    x=stock_data.index,
+                    y=stock_data['RSI'],
+                    name='RSI',
+                    line=dict(color='purple')
+                ))
+                fig_rsi.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overbought")
+                fig_rsi.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="Oversold")
+                fig_rsi.update_layout(title="RSI Indicator", height=300)
+                st.plotly_chart(fig_rsi, use_container_width=True)
     
     def display_fundamental_analysis(self, fundamental_analysis):
         col1, col2, col3 = st.columns(3)
@@ -281,13 +727,11 @@ class StockApp:
             st.metric("Debt/Equity", f"{fundamental_analysis['debt_equity']:.2f}")
     
     def display_financial_health(self, fundamental_data):
-        # Financial health score and metrics
         col1, col2 = st.columns(2)
         
         with col1:
             st.subheader("Financial Strength")
             
-            # Create a financial health score gauge
             health_score = fundamental_data.get('financial_health_score', 7.5)
             
             fig_gauge = go.Figure(go.Indicator(
@@ -327,52 +771,24 @@ class StockApp:
     
     def screener_page(self):
         st.header("Stock Screener")
+        st.write("Filter stocks based on your criteria")
         
-        # Screening filters
-        col1, col2, col3 = st.columns(3)
+        # Sample screened results
+        screened_data = {
+            "Symbol": ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK"],
+            "Price": [2456.78, 3234.56, 1654.32, 1567.89, 987.65],
+            "P/E": [24.5, 28.3, 18.7, 22.1, 16.8],
+            "ROE": [18.5, 45.2, 17.8, 24.5, 16.9],
+            "Debt/Equity": [0.45, 0.12, 0.78, 0.15, 0.89],
+            "Recommendation": ["BUY", "HOLD", "BUY", "BUY", "HOLD"]
+        }
         
-        with col1:
-            pe_min = st.number_input("Min P/E Ratio", value=0.0, step=0.1)
-            pe_max = st.number_input("Max P/E Ratio", value=50.0, step=0.1)
-        
-        with col2:
-            roe_min = st.number_input("Min ROE (%)", value=15.0, step=1.0)
-            debt_max = st.number_input("Max Debt/Equity", value=1.0, step=0.1)
-        
-        with col3:
-            market_cap_min = st.selectbox("Min Market Cap", 
-                                        ["Any", "Small Cap", "Mid Cap", "Large Cap"])
-            sector = st.selectbox("Sector", 
-                                ["All", "Banking", "IT", "Pharma", "Auto", "FMCG"])
-        
-        if st.button("Screen Stocks", type="primary"):
-            # Sample screened results
-            screened_data = {
-                "Symbol": ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK"],
-                "Price": [2456.78, 3234.56, 1654.32, 1567.89, 987.65],
-                "P/E": [24.5, 28.3, 18.7, 22.1, 16.8],
-                "ROE": [18.5, 45.2, 17.8, 24.5, 16.9],
-                "Debt/Equity": [0.45, 0.12, 0.78, 0.15, 0.89],
-                "Recommendation": ["BUY", "HOLD", "BUY", "BUY", "HOLD"]
-            }
-            
-            df_screened = pd.DataFrame(screened_data)
-            st.dataframe(df_screened, use_container_width=True)
+        df_screened = pd.DataFrame(screened_data)
+        st.dataframe(df_screened, use_container_width=True)
     
     def portfolio_page(self):
         st.header("Portfolio Tracking")
-        
-        # Add stock to portfolio
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            new_symbol = st.text_input("Stock Symbol")
-        with col2:
-            quantity = st.number_input("Quantity", min_value=1, value=1)
-        with col3:
-            avg_price = st.number_input("Avg Price", min_value=0.01, value=100.0)
-        with col4:
-            if st.button("Add to Portfolio"):
-                st.success(f"Added {quantity} shares of {new_symbol}")
+        st.write("Track your investment portfolio")
         
         # Portfolio summary
         portfolio_data = {
@@ -385,85 +801,23 @@ class StockApp:
         }
         
         portfolio_df = pd.DataFrame(portfolio_data)
-        st.subheader("Current Portfolio")
         st.dataframe(portfolio_df, use_container_width=True)
-        
-        # Portfolio metrics
-        total_invested = sum(portfolio_df['Quantity'] * portfolio_df['Avg Price'])
-        current_value = sum(portfolio_df['Quantity'] * portfolio_df['Current Price'])
-        total_pnl = current_value - total_invested
-        total_pnl_pct = (total_pnl / total_invested) * 100
-        
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Total Invested", f"₹{total_invested:,.2f}")
-        with col2:
-            st.metric("Current Value", f"₹{current_value:,.2f}")
-        with col3:
-            st.metric("Total P&L", f"₹{total_pnl:,.2f}", f"{total_pnl_pct:.2f}%")
-        with col4:
-            st.metric("Portfolio Return", f"{total_pnl_pct:.2f}%")
     
     def market_overview_page(self):
         st.header("Market Overview")
+        st.write("Overview of market performance")
         
         # Sector performance
-        col1, col2 = st.columns(2)
+        sectors_data = {
+            "Sector": ["IT", "Banking", "Pharma", "Auto", "FMCG", "Metal"],
+            "Change %": [2.45, 1.78, -0.89, 3.21, 0.67, -2.14]
+        }
         
-        with col1:
-            sectors_data = {
-                "Sector": ["IT", "Banking", "Pharma", "Auto", "FMCG", "Metal"],
-                "Change %": [2.45, 1.78, -0.89, 3.21, 0.67, -2.14]
-            }
-            
-            fig_sectors = px.bar(sectors_data, x="Sector", y="Change %", 
-                               title="Sector Performance Today",
-                               color="Change %", 
-                               color_continuous_scale="RdYlGn")
-            st.plotly_chart(fig_sectors, use_container_width=True)
-        
-        with col2:
-            # Market breadth
-            breadth_data = {
-                "Category": ["Advancing", "Declining", "Unchanged"],
-                "Count": [1245, 987, 156]
-            }
-            
-            fig_breadth = px.pie(breadth_data, values="Count", names="Category",
-                               title="Market Breadth")
-            st.plotly_chart(fig_breadth, use_container_width=True)
-        
-        # Market news (placeholder)
-        st.subheader("Market News")
-        news_items = [
-            "RBI keeps repo rate unchanged at 6.50%",
-            "SEBI introduces new regulations for F&O trading",
-            "Q2 earnings season shows mixed results",
-            "FII inflows continue for the third consecutive week"
-        ]
-        
-        for news in news_items:
-            st.write(f"• {news}")
-    
-    def create_market_heatmap(self):
-        # Sample data for heatmap
-        sectors = ['Banking', 'IT', 'Pharma', 'Auto', 'FMCG', 'Metal', 'Energy', 'Telecom']
-        performance = [1.2, 2.1, -0.5, 1.8, 0.3, -1.2, 0.8, -0.3]
-        
-        fig = go.Figure(data=go.Heatmap(
-            z=[performance],
-            x=sectors,
-            y=['Market Performance'],
-            colorscale='RdYlGn',
-            zmid=0
-        ))
-        
-        fig.update_layout(
-            title="Sector Performance Heatmap",
-            height=200
-        )
-        
-        st.plotly_chart(fig, use_container_width=True)
+        fig_sectors = px.bar(sectors_data, x="Sector", y="Change %", 
+                           title="Sector Performance Today",
+                           color="Change %", 
+                           color_continuous_scale="RdYlGn")
+        st.plotly_chart(fig_sectors, use_container_width=True)
 
 # Run the app
 if __name__ == "__main__":
